@@ -22,6 +22,26 @@ The scripts in `scripts/` install the repository's configuration in `~/.codex`. 
 
 `sync-subagents.sh` creates `~/.codex/agents` when needed, then copies the contents of this repository's `agents/` directory into it. Existing files with the same names are replaced, while files that exist only in `~/.codex/agents` are preserved.
 
+## Reporting Codex usage
+
+Run the local usage report with:
+
+```bash
+python3 /path/to/ai-hub/scripts/codex_usage.py
+```
+
+The script reads retained rollout files from `~/.codex/sessions` and `~/.codex/archived_sessions`. It attributes token deltas to the model active in each `turn_context`, so a conversation that switches models is split correctly. It reports token totals, cache use, estimated cost, run type, agent role, daily totals, and the largest runs.
+
+Useful filters include:
+
+```bash
+python3 /path/to/ai-hub/scripts/codex_usage.py --since 2026-09-01 --until 2026-09-02
+python3 /path/to/ai-hub/scripts/codex_usage.py --exclude-thread THREAD_ID
+python3 /path/to/ai-hub/scripts/codex_usage.py --codex-home /path/to/.codex
+```
+
+The cost output uses the standard short-context rates for GPT-5.6 Sol, Terra, and Luna embedded in the script. It is an estimate, not an account billing export, and excludes long-context multipliers and tool-specific charges.
+
 ## Included subagents
 
 - **developer-simple** handles small, well-defined coding tasks where the intended solution is already clear. It focuses on the smallest complete change and validates its work.
