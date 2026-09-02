@@ -96,6 +96,14 @@ def classify_source(source: Any) -> str:
     return "task-subagent"
 
 
+def model_from_payload(payload: dict[str, Any]) -> str | None:
+    for key in ("model", "model_name"):
+        model = payload.get(key)
+        if isinstance(model, str) and model:
+            return model
+    return None
+
+
 def numeric_value(value: Any, fallback: int = 0) -> int:
     if isinstance(value, bool):
         return fallback
@@ -161,6 +169,7 @@ class SessionReport:
     nickname: str
     started_at: datetime | None
     model_usage: dict[str, Usage]
+    unattributed_usage: Usage = field(default_factory=Usage)
     reset_count: int = 0
 
     @property
@@ -168,6 +177,7 @@ class SessionReport:
         combined = Usage()
         for usage in self.model_usage.values():
             combined.merge(usage)
+        combined.merge(self.unattributed_usage)
         return combined
 
     @property
@@ -193,11 +203,28 @@ def read_jsonl(path: Path, warnings: list[str]) -> Iterable[dict[str, Any]]:
 def load_session(path: Path, warnings: list[str]) -> SessionReport | None:
     metadata: dict[str, Any] = {}
     first_timestamp: datetime | None = None
-    active_model = "unknown"
+    active_model: str | None = None
     previous = {field_name: 0 for field_name in TOKEN_FIELDS}
     seen_token_count = False
     model_usage: dict[str, Usage] = {}
+    pending_deltas: list[dict[str, int]] = []
+    unattributed_usage = Usage()
     reset_count = 0
+
+    def thread_id() -> str:
+        return str(metadata.get("id") or path.stem)
+
+    def add_delta(model: str, delta: dict[str, int]) -> None:
+        usage = model_usage.setdefault(model, Usage())
+        usage.add_delta(model, thread_id(), delta)
+
+    def activate_model(model: str) -> None:
+        nonlocal active_model
+        if active_model is None and pending_deltas:
+            for pending_delta in pending_deltas:
+                add_delta(model, pending_delta)
+            pending_deltas.clear()
+        active_model = model
 
     for record in read_jsonl(path, warnings):
         timestamp = parse_iso_timestamp(record.get("timestamp"))
@@ -211,12 +238,15 @@ def load_session(path: Path, warnings: list[str]) -> SessionReport | None:
 
         if record_type == "session_meta" and not metadata:
             metadata = payload
+            model = model_from_payload(payload)
+            if model:
+                activate_model(model)
             continue
 
         if record_type == "turn_context":
-            model = payload.get("model")
-            if isinstance(model, str) and model:
-                active_model = model
+            model = model_from_payload(payload)
+            if model:
+                activate_model(model)
             continue
 
         if record_type != "event_msg" or payload.get("type") != "token_count":
@@ -244,11 +274,16 @@ def load_session(path: Path, warnings: list[str]) -> SessionReport | None:
         if delta["total_tokens"] <= 0:
             continue
 
-        usage = model_usage.setdefault(active_model, Usage())
-        thread_id = str(metadata.get("id") or path.stem)
-        usage.add_delta(active_model, thread_id, delta)
+        if active_model is None:
+            pending_deltas.append(delta)
+        else:
+            add_delta(active_model, delta)
 
-    if not seen_token_count or not model_usage:
+    if pending_deltas:
+        for pending_delta in pending_deltas:
+            unattributed_usage.add_delta("unattributed", thread_id(), pending_delta)
+
+    if not seen_token_count or (not model_usage and unattributed_usage.total_tokens == 0):
         return None
 
     source = metadata.get("source")
@@ -267,6 +302,7 @@ def load_session(path: Path, warnings: list[str]) -> SessionReport | None:
         nickname=nickname,
         started_at=first_timestamp,
         model_usage=model_usage,
+        unattributed_usage=unattributed_usage,
         reset_count=reset_count,
     )
 
@@ -282,12 +318,13 @@ def session_paths(codex_home: Path) -> list[Path]:
 
 def aggregate(
     sessions: list[SessionReport],
-) -> tuple[Usage, dict[str, Usage], dict[str, Usage], dict[str, Usage], dict[date, Usage]]:
+) -> tuple[Usage, dict[str, Usage], dict[str, Usage], dict[str, Usage], dict[date, Usage], Usage]:
     total = Usage()
     by_model: dict[str, Usage] = defaultdict(Usage)
     by_run_type: dict[str, Usage] = defaultdict(Usage)
     by_role: dict[str, Usage] = defaultdict(Usage)
     by_day: dict[date, Usage] = defaultdict(Usage)
+    unattributed = Usage()
 
     for session in sessions:
         session_day = local_date(session.started_at)
@@ -298,8 +335,16 @@ def aggregate(
             if session_day is not None:
                 by_day[session_day].merge(usage)
             total.merge(usage)
+        if session.unattributed_usage.total_tokens:
+            usage = session.unattributed_usage
+            unattributed.merge(usage)
+            by_run_type[session.run_type].merge(usage)
+            by_role[session.role].merge(usage)
+            if session_day is not None:
+                by_day[session_day].merge(usage)
+            total.merge(usage)
 
-    return total, by_model, by_run_type, by_role, by_day
+    return total, by_model, by_run_type, by_role, by_day, unattributed
 
 
 def print_usage(label: str, usage: Usage, total_tokens: int | None = None, indent: str = "  ") -> None:
@@ -322,6 +367,7 @@ def print_report(
     by_run_type: dict[str, Usage],
     by_role: dict[str, Usage],
     by_day: dict[date, Usage],
+    unattributed: Usage,
     warnings: list[str],
     top_count: int,
 ) -> None:
@@ -350,6 +396,9 @@ def print_report(
     for model, usage in sorted(by_model.items(), key=lambda item: item[1].total_tokens, reverse=True):
         print_usage(model, usage, total.total_tokens)
         print(f"    Threads touched: {len(usage.thread_ids)}")
+    if unattributed.total_tokens:
+        print_usage("Unattributed", unattributed, total.total_tokens)
+        print("    Model metadata was not present in the session records available to the parser.")
     print()
 
     print("By run type")
@@ -372,6 +421,8 @@ def print_report(
     ranked_sessions = sorted(sessions, key=lambda session: session.usage.total_tokens, reverse=True)
     for index, session in enumerate(ranked_sessions[:top_count], start=1):
         model_label = ", ".join(session.models)
+        if session.unattributed_usage.total_tokens:
+            model_label = f"{model_label}, unattributed" if model_label else "unattributed"
         role_label = session.role if session.role != session.run_type else session.run_type
         nickname = f" / {session.nickname}" if session.nickname else ""
         print(f"  {index}. {format_tokens(session.usage.total_tokens)} | {role_label}{nickname} | {model_label} | {session.thread_id}")
@@ -454,8 +505,19 @@ def main(argv: list[str] | None = None) -> int:
         print("No sessions matched the selected filters.", file=sys.stderr)
         return 1
 
-    total, by_model, by_run_type, by_role, by_day = aggregate(sessions)
-    print_report(codex_home, sessions, total, by_model, by_run_type, by_role, by_day, warnings, args.top)
+    total, by_model, by_run_type, by_role, by_day, unattributed = aggregate(sessions)
+    print_report(
+        codex_home,
+        sessions,
+        total,
+        by_model,
+        by_run_type,
+        by_role,
+        by_day,
+        unattributed,
+        warnings,
+        args.top,
+    )
     return 0
 
 

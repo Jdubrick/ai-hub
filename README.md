@@ -30,7 +30,7 @@ Run the local usage report with:
 python3 /path/to/ai-hub/scripts/codex_usage.py
 ```
 
-The script reads retained rollout files from `~/.codex/sessions` and `~/.codex/archived_sessions`. It attributes token deltas to the model active in each `turn_context`, so a conversation that switches models is split correctly. It reports token totals, cache use, estimated cost, run type, agent role, daily totals, and the largest runs.
+The script reads retained rollout files from `~/.codex/sessions` and `~/.codex/archived_sessions`. It attributes token deltas to the model active in each `turn_context`, so a conversation that switches models is split correctly. It buffers token counts that arrive before the first model context and assigns them to that model. If no model metadata is ever available, it reports the tokens separately as unattributed instead of inventing a model. It reports token totals, cache use, estimated cost, run type, agent role, daily totals, and the largest runs.
 
 Useful filters include:
 
