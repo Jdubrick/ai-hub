@@ -24,3 +24,15 @@ These are development guidelines intented to reduce common mistakes when working
 - Give each subagent a narrowly scoped objective and explicit file ownership.
 - Avoid assigning overlapping write scopes to parallel agents.
 - Review and integrate subagent changes rather than assuming they are correct.
+
+## Tools
+
+When starting a new feature it is important to leverage Codegraph. If Codegraph is not present in the repository at the start of a feature, we need to run:
+```sh
+codegraph init
+```
+
+If it is present we need to make sure it is up to date by:
+```sh
+codegraph sync
+```
