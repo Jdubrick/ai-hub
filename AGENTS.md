@@ -16,6 +16,7 @@ These are development guidelines intented to reduce common mistakes when working
 - Investigate failures rather than assuming they are unrelated.
 - Review the final diff for accidental, unnecessary, or unrelated changes.
 - Do not overwrite or discard existing user changes.
+- When asked to make Git commits, ensure they are signed-off with '-s'.
 
 ## Subagent Handling
 - Do not spawn subagents when a single agent can complete the task effectively in one pass.
