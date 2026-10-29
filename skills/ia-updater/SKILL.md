@@ -28,8 +28,8 @@ These steps can be applied to all 3 repositories (Operator, Helm, Local), with r
 2. Ensure clone is on the latest commit from the upstream release branch
    1. Release branches follow the `release-X.Y` structure. E.g. RHDH 1.10 is `release-1.10`
 3. Create new branch based on the appropriate upstream release branch
-   1. Branch naming structure: `chore/ia-images-lcore-x.y.z-okp-x.y.z-123
-   2. E.g `chore/ia-images-lcore-0.7.1-okp-1.3.0-12345
+   1. Branch naming structure: `chore/ia-images-lcore-x.y.z-okp-x.y.z-123`
+   2. E.g `chore/ia-images-lcore-0.7.1-okp-1.3.0-12345`
    3. **Note:** If the update is only LCORE, or only OKP, you can drop the unused name
       1. E.g `chore/ia-images-lcore-0.7.1` when no OKP updates
 4. Follow the repository speicifc instructions below
